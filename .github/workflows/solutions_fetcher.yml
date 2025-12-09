@@ -1,0 +1,52 @@
+name: Daily Wordle Archive Fetcher
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every day for continuous updates
+    - cron: '0 0 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      days_to_fetch:
+        description: 'Number of days to fetch data for'
+        required: false
+        default: '25'
+        type: string
+
+jobs:
+  fetch_wordle_archive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: ⬇Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Data Fetching Script
+        run: python fetch_data.py ${{ github.event.inputs.days_to_fetch || '25' }}
+
+      - name: Commit and Push Wordle Archive
+        run: |
+          # Configure Git user for the commit
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # Add all new/modified files in the wordle_archive folder
+          git add wordle_archive
+          
+          # Check if there are any changes to commit
+          if ! git diff --cached --exit-code; then
+            git commit -m 'chore: Update Wordle archive with future solutions'
+            git push
+          else
+            echo "No changes in wordle_archive folder. Skipping commit."
+          fi
