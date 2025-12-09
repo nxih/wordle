@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wordle Solution Calendar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom Wordle Colors */
+        :root {
+            --color-tile-absent: #3a3a3c; /* Dark gray for absent */
+            --color-tile-present: #C9B458; /* Yellow */
+            --color-tile-correct: #6AAA64; /* Green */
+            --color-background: #121213;
+            --color-text: #FFFFFF;
+            --color-header: #FFFFFF;
+        }
+
+        /* Keyframes for the 'pop' (bounce/wiggle) animation */
+        @keyframes bounce-in {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        /* Class for the click animation */
+        .bounce-animation {
+            animation: bounce-in 0.2s ease-in-out;
+        }
+        
+        /* Keyframes for the Wordle letter flip/reveal in the modal */
+        @keyframes flip-in {
+            0% { transform: rotateX(90deg); opacity: 0; }
+            50% { transform: rotateX(-10deg); }
+            100% { transform: rotateX(0deg); opacity: 1; }
+        }
+
+        /* Apply the flip-in animation to modal letters */
+        .modal-letter-tile {
+            animation: flip-in 0.5s ease-out;
+            transform-style: preserve-3d;
+        }
+
+
+        /* Base styles for the calendar tile */
+        .calendar-tile {
+            width: 100%;
+            padding-top: 100%; /* Makes the tile square */
+            position: relative;
+            background-color: var(--color-tile-absent); /* Default background color */
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: var(--color-text);
+            border-radius: 4px; 
+            transition: background-color 0.3s ease, transform 0.1s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Content inside the square tile */
+        .tile-content {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 4px;
+            text-align: center;
+            line-height: 1.1;
+        }
+        
+        /* Date Number Size */
+        .tile-date-number {
+            font-size: 1.8rem; /* Larger date number */
+            font-weight: 900;
+        }
+
+        /* Styles for different data states */
+        .tile-correct { background-color: var(--color-tile-correct); }
+        .tile-present { background-color: var(--color-tile-present); }
+        .tile-loading { background-color: #538d4e; } /* A blend for fetching */
+        .tile-error { background-color: #924545; } /* Reddish for error */
+        
+        /* Modal Backdrop */
+        .modal-backdrop {
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+    </style>
+</head>
+
+<body class="bg-[#121213] min-h-screen p-4 sm:p-10 font-sans">
+    
+    <header class="text-center mb-10">
+        <h1 class="text-4xl sm:text-6xl font-extrabold tracking-widest text-white pb-3 inline-block border-b-4 border-green-500">WORDLE SOLUTIONS</h1>
+        <p class="text-gray-400 mt-2 text-lg">Solutions for the next 14 days</p>
+    </header>
+
+    <div id="calendar-container" class="max-w-6xl mx-auto grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-5">
+        </div>
+
+    <div id="solution-modal" class="fixed inset-0 modal-backdrop hidden z-50 flex items-center justify-center transition-opacity duration-300 opacity-0" onclick="closeModal()">
+        <div class="bg-[#212122] rounded-xl shadow-[0_0_20px_rgba(106,170,100,0.5)] p-8 w-11/12 max-w-md border-4 border-green-600 transform scale-95 transition-transform duration-300" onclick="event.stopPropagation()">
+            <h2 id="modal-date" class="text-white text-3xl font-extrabold mb-4 pb-3 border-b border-gray-600 text-center"></h2>
+            <div class="text-center">
+                <p class="text-gray-300 text-xl font-medium mb-4">The Solution Is:</p>
+                <div id="modal-solution-container" class="flex justify-center space-x-2">
+                    </div>
+            </div>
+            <button onclick="closeModal()" class="mt-8 w-full py-3 bg-green-600 hover:bg-green-700 text-white text-lg font-bold rounded-lg transition duration-200 shadow-md">Close Calendar</button>
+        </div>
+    </div>
+    
+    <div id="loading-spinner" class="fixed inset-0 modal-backdrop hidden z-40 flex items-center justify-center">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-green-500"></div>
+    </div>
+
+
+    <script>
+        // --- Configuration ---
+        const BASE_URL = "https://raw.githubusercontent.com/nxih/wordle/refs/heads/main/wordle_archive/";
+        const DAYS_TO_DISPLAY = 14;
+        const calendarContainer = document.getElementById('calendar-container');
+        const modal = document.getElementById('solution-modal');
+        const modalDate = document.getElementById('modal-date');
+        const modalSolutionContainer = document.getElementById('modal-solution-container');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        // Cache for storing fetched solutions
+        const solutionCache = {};
+
+        // --- Utility Functions ---
+
+        /**
+         * Formats a Date object into the YYYY-MM-DD string format required by the API.
+         * @param {Date} date - The date to format.
+         * @returns {string} The formatted date string.
+         */
+        function formatDate(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+        
+        /**
+         * Formats a date string into a readable format for the modal title.
+         * @param {string} dateString - The date in YYYY-MM-DD format.
+         * @returns {string} The formatted, readable date string.
+         */
+        function formatReadableDate(dateString) {
+            // Fix: The new Date() constructor, when given "YYYY-MM-DD", parses it as UTC midnight,
+            // which can shift the date backward by one day in local timezones (like yours, CST).
+            // By adding "T12:00:00" (noon), we ensure the date is correctly interpreted in local time.
+            const date = new Date(dateString + 'T12:00:00');
+            return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+
+
+        // --- Calendar Rendering and Logic ---
+
+        /**
+         * Creates and appends a single calendar tile to the grid.
+         * @param {Date} dateObj - The Date object for the tile.
+         */
+        function createCalendarTile(dateObj) {
+            const dateString = formatDate(dateObj);
+            const todayString = formatDate(new Date());
+
+            const tileDiv = document.createElement('div');
+            tileDiv.className = 'calendar-tile';
+            tileDiv.setAttribute('data-date', dateString);
+            tileDiv.setAttribute('data-status', 'loading');
+            
+            // Set tile background based on date
+            let tileClass = 'tile-absent';
+            if (dateString < todayString) {
+                tileClass = 'tile-correct'; // Past solutions
+            } else if (dateString === todayString) {
+                tileClass = 'tile-present'; // Today's solution
+            }
+            tileDiv.classList.add(tileClass);
+
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'tile-content';
+            contentDiv.innerHTML = `
+                <span class="tile-date-number">${dateObj.getDate()}</span>
+                <span class="text-sm uppercase font-semibold">${dateObj.toLocaleString('en-US', { month: 'short' })}</span>
+                <span id="solution-hint-${dateString}" class="text-sm font-light mt-1 text-gray-300">Fetching...</span>
+            `;
+            tileDiv.appendChild(contentDiv);
+            
+            // Add click listener
+            tileDiv.addEventListener('click', () => showSolution(dateString, tileDiv));
+
+            calendarContainer.appendChild(tileDiv);
+        }
+
+        /**
+         * Initializes the calendar by determining the start date and creating tiles.
+         */
+        function initializeCalendar() {
+            // Start from today
+            const today = new Date();
+            
+            for (let i = 0; i < DAYS_TO_DISPLAY; i++) {
+                const date = new Date(today);
+                date.setDate(today.getDate() + i);
+                createCalendarTile(date);
+            }
+            
+            // After rendering tiles, fetch data for all of them
+            fetchAllSolutions();
+        }
+
+        // --- Data Fetching and Updating ---
+
+        /**
+         * Fetches the Wordle solution for a specific date.
+         * @param {string} dateString - The date in YYYY-MM-DD format.
+         */
+        async function fetchSolution(dateString) {
+            if (solutionCache[dateString] !== undefined) {
+                return solutionCache[dateString];
+            }
+
+            const url = `${BASE_URL}${dateString}.json`;
+            const tile = document.querySelector(`.calendar-tile[data-date="${dateString}"]`);
+            const hintSpan = document.getElementById(`solution-hint-${dateString}`);
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                solutionCache[dateString] = data.solution.toUpperCase();
+                
+                // Update tile status and hint
+                if (tile) {
+                    tile.setAttribute('data-status', 'ready');
+                }
+                if (hintSpan) {
+                    hintSpan.textContent = 'REVEAL';
+                }
+                
+                return solutionCache[dateString];
+
+            } catch (error) {
+                console.error(`Could not fetch solution for ${dateString}:`, error);
+                solutionCache[dateString] = null; // Store null to prevent re-fetching
+                
+                if (tile) {
+                    tile.classList.add('tile-error');
+                    tile.setAttribute('data-status', 'error');
+                }
+                if (hintSpan) {
+                    hintSpan.textContent = 'No Data';
+                }
+                return null;
+            }
+        }
+
+        /**
+         * Fetches all solutions for the displayed dates concurrently.
+         */
+        async function fetchAllSolutions() {
+            const dateElements = document.querySelectorAll('.calendar-tile');
+            const fetchPromises = Array.from(dateElements).map(tile => {
+                const dateString = tile.getAttribute('data-date');
+                return fetchSolution(dateString);
+            });
+            // Wait for all fetches to complete
+            await Promise.all(fetchPromises);
+        }
+
+        // --- Modal Display Logic ---
+
+        /**
+         * Shows the modal with the solution for the clicked date.
+         * @param {string} dateString - The date of the clicked tile.
+         * @param {HTMLElement} tileDiv - The clicked tile element.
+         */
+        async function showSolution(dateString, tileDiv) {
+            // Apply bounce animation to the tile
+            tileDiv.classList.add('bounce-animation');
+            setTimeout(() => {
+                tileDiv.classList.remove('bounce-animation');
+            }, 200);
+
+
+            const status = tileDiv.getAttribute('data-status');
+            if (status === 'error' || status === 'loading') {
+                return; // Prevent modal if data is not available or fetching
+            }
+
+            // Show global loading spinner while waiting for data 
+            loadingSpinner.classList.remove('hidden');
+
+            const solution = await fetchSolution(dateString);
+
+            // Hide spinner and bail if solution failed to fetch
+            loadingSpinner.classList.add('hidden');
+            if (!solution) {
+                return;
+            }
+
+            // Populate Modal Content
+            // FIX: Use the fixed formatting function
+            modalDate.textContent = formatReadableDate(dateString);
+            modalSolutionContainer.innerHTML = ''; // Clear previous letters
+
+            // Create Wordle-style letter tiles for the solution with a staggered flip animation
+            solution.split('').forEach((letter, index) => {
+                const letterTile = document.createElement('div');
+                letterTile.className = 'w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center border-2 border-white text-white font-extrabold text-2xl tile-correct modal-letter-tile';
+                letterTile.textContent = letter;
+                // Stagger the animation timing
+                letterTile.style.animationDelay = `${index * 0.1}s`; 
+                modalSolutionContainer.appendChild(letterTile);
+            });
+
+            // Show Modal with animation
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('div').classList.remove('scale-95');
+            }, 10); // Small delay for transition to work
+        }
+
+        /**
+         * Closes the solution modal with animation.
+         */
+        function closeModal() {
+            modal.querySelector('div').classList.add('scale-95');
+            modal.classList.add('opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300); // Wait for transition to complete
+        }
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', initializeCalendar);
+    </script>
+</body>
+</html>
