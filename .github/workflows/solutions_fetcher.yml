@@ -32,7 +32,7 @@ jobs:
         run: pip install requests
 
       - name: Run Data Fetching Script
-        run: python fetch_data.py ${{ github.event.inputs.days_to_fetch || '25' }}
+        run: python fetch_solutions.py ${{ github.event.inputs.days_to_fetch || '25' }}
 
       - name: Commit and Push Wordle Archive
         run: |
